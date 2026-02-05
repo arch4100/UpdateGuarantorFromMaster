@@ -4,7 +4,6 @@ Option Explicit
 '========================
 ' EDIT THESE
 '========================
-Private Const SIG_NAME As String = "New File Upload" 'Outlook signature name (must exist)
 Private Const MASTER_SOFTCOPY_LINK As String = "S:\Customer Engagement Division\PFD CLN\03.02_Bond Master LOI - Master Admin" 'your "here" link target
 
 'Where to save the filtered draft attachment
@@ -416,4 +415,3 @@ Private Function OrdSuffix(ByVal n As Long) As String
         End Select
     End If
 End Function
-
