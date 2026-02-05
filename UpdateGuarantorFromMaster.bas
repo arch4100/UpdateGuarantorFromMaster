@@ -12,7 +12,6 @@ Private Const COL_TARGET_UEN As String = "C"
 Private Const COL_TARGET_POLICYDATE As String = "K"
 Private Const COL_TARGET_SUBCLASS As String = "E"
 Private Const COL_TARGET_INTERMEDIARY As String = "H"
-Private Const COL_TARGET_POLICYNO As String = "B"
 
 'Master columns
 Private Const COL_MASTER_UEN As String = "G"
@@ -24,8 +23,15 @@ Private Const COL_MASTER_UPLOADHIST As String = "X" 'NO/YES (auto flip NO->YES)
 'Master LOI PDF folder
 Private Const MASTER_LOI_PDF_FOLDER As String = "S:\Customer Engagement Division\PFD CLN\03.02_Bond Master LOI - Master Admin"
 
+'Where to save the filtered draft attachment
+Private Const EMAIL_EXCEL_DRAFT_FOLDER As String = "S:\Customer Engagement Division\PFD CLN\03.04_Bond LOI Return File Upload\zFiling\Email Excel Draft"
+
 'File Upload Deposit folder
 Private Const FINAL_OUTPUT_CSV As String = "S:\Common\Customer Engagement Division\Bond LOI Management\Upload Guarantor Details\GUARANTOR_LOI_PROCESS.csv"
+
+'Subclass scope
+Private Const SUBCLASS_1 As String = "BDFWIM"
+Private Const SUBCLASS_2 As String = "FTFWOR"
 
 
 Sub UpdateGuarantorFromMaster()
@@ -36,7 +42,7 @@ Sub UpdateGuarantorFromMaster()
     Dim lastRowMaster As Long, lastRowTarget As Long
     Dim i As Long, j As Long
 
-    Dim uen As String, policyNo As String
+    Dim uen As String
     Dim policyDate As Date
     Dim bestMatchRow As Long
     Dim latestValidDate As Date
@@ -101,12 +107,10 @@ Sub UpdateGuarantorFromMaster()
     For i = 2 To lastRowTarget
 
         checkVal = Trim$(UCase$(CStr(targetWS.Cells(i, COL_TARGET_SUBCLASS).Value)))
-        If checkVal <> "BDFWIM" And checkVal <> "FTFWOR" Then GoTo SkipToNext
+        If checkVal <> SUBCLASS_1 And checkVal <> SUBCLASS_2 Then GoTo SkipToNext
 
         uen = Trim$(CStr(targetWS.Cells(i, COL_TARGET_UEN).Value))
         If uen = "" Then GoTo SkipToNext
-
-        policyNo = Trim$(CStr(targetWS.Cells(i, COL_TARGET_POLICYNO).Value))
 
         If IsDate(targetWS.Cells(i, COL_TARGET_POLICYDATE).Value) Then
             policyDate = CDate(targetWS.Cells(i, COL_TARGET_POLICYDATE).Value)
@@ -148,16 +152,7 @@ Sub UpdateGuarantorFromMaster()
         If rowFound Then
 
             'Update target mapping (as per your current mapping)
-            targetWS.Cells(i, "U").Value = masterWS.Cells(bestMatchRow, "J").Value
-            targetWS.Cells(i, "V").Value = MapGuarantorRole(CStr(masterWS.Cells(bestMatchRow, "K").Value))
-            targetWS.Cells(i, "W").Value = masterWS.Cells(bestMatchRow, "M").Value
-            targetWS.Cells(i, "X").Value = MapGuarantorRole(CStr(masterWS.Cells(bestMatchRow, "N").Value))
-            targetWS.Cells(i, "Y").Value = masterWS.Cells(bestMatchRow, "P").Value
-            targetWS.Cells(i, "Z").Value = MapGuarantorRole(CStr(masterWS.Cells(bestMatchRow, "Q").Value))
-            targetWS.Cells(i, "AA").Value = masterWS.Cells(bestMatchRow, "S").Value
-            targetWS.Cells(i, "AB").Value = MapGuarantorRole(CStr(masterWS.Cells(bestMatchRow, "T").Value))
-            targetWS.Cells(i, "AC").Value = masterWS.Cells(bestMatchRow, "V").Value
-            targetWS.Cells(i, "AD").Value = MapGuarantorRole(CStr(masterWS.Cells(bestMatchRow, "W").Value))
+            ApplyGuarantorMapping targetWS, i, masterWS, bestMatchRow
 
             'AUTO: if Master X is NO => flip to YES and queue email (no prompt)
             If Trim$(UCase$(CStr(masterWS.Cells(bestMatchRow, COL_MASTER_UPLOADHIST).Value))) = "NO" Then
@@ -210,7 +205,7 @@ SkipToNext:
         masterRow2 = CLng(arr(4))
 
         'Let your email macro generate filtered CSV if you pass blank,
-        'BUT you asked to do it after updates – keep it explicit here (optional).
+        'BUT you asked to do it after updates  keep it explicit here (optional).
         attachCsv = "" 'leave blank to let PrepareFileUploadCheckEmailDraft build it
 
         masterPdf = FindMasterLOIPDF(masterWS, masterRow2)
@@ -355,7 +350,7 @@ Private Sub HandleFirstTimeUploadPrompt( _
             k = insuredName & "|" & uen & "|" & intermediary & "|" & Format(indemnityDate, "yyyymmdd")
 
             If Not pendingEmails.Exists(k) Then
-                pendingEmails.Add k, Array(insuredName, uen, intermediary, indemnityDate)
+                pendingEmails.Add k, Array(insuredName, uen, intermediary, indemnityDate, CLng(masterRow))
             End If
 
         End If
@@ -414,7 +409,7 @@ Private Function CreateFilteredExcelForChecking_FromSheet_AtoAE( _
         If StrComp(vUEN, uen, vbTextCompare) <> 0 Then GoTo NextI
 
         vSubclass = Trim$(UCase$(CStr(ws.Cells(i, COL_TARGET_SUBCLASS).Value)))
-        If vSubclass <> "BDFWIM" And vSubclass <> "FTFWOR" Then GoTo NextI
+        If vSubclass <> SUBCLASS_1 And vSubclass <> SUBCLASS_2 Then GoTo NextI
 
         vInter = NormalizeIntermediary(CStr(ws.Cells(i, COL_TARGET_INTERMEDIARY).Value))
         If StrComp(vInter, normTgtInter, vbTextCompare) <> 0 Then GoTo NextI
@@ -570,6 +565,57 @@ Function MapGuarantorRole(role As String) As String
 End Function
 
 '==================================================
+' MAPPING HELPERS
+'==================================================
+Private Sub ApplyGuarantorMapping( _
+    ByVal targetWS As Worksheet, _
+    ByVal targetRow As Long, _
+    ByVal masterWS As Worksheet, _
+    ByVal masterRow As Long _
+)
+    Dim mappings As Variant
+    mappings = Array( _
+        Array("U", "J", False), _
+        Array("V", "K", True), _
+        Array("W", "M", False), _
+        Array("X", "N", True), _
+        Array("Y", "P", False), _
+        Array("Z", "Q", True), _
+        Array("AA", "S", False), _
+        Array("AB", "T", True), _
+        Array("AC", "V", False), _
+        Array("AD", "W", True) _
+    )
+
+    Dim i As Long
+    For i = LBound(mappings) To UBound(mappings)
+        WriteMappedValue targetWS, targetRow, masterWS, masterRow, mappings(i)
+    Next i
+End Sub
+
+Private Sub WriteMappedValue( _
+    ByVal targetWS As Worksheet, _
+    ByVal targetRow As Long, _
+    ByVal masterWS As Worksheet, _
+    ByVal masterRow As Long, _
+    ByVal mapping As Variant _
+)
+    Dim targetCol As String
+    Dim sourceCol As String
+    Dim isRole As Boolean
+
+    targetCol = CStr(mapping(0))
+    sourceCol = CStr(mapping(1))
+    isRole = CBool(mapping(2))
+
+    If isRole Then
+        targetWS.Cells(targetRow, targetCol).Value = MapGuarantorRole(CStr(masterWS.Cells(masterRow, sourceCol).Value))
+    Else
+        targetWS.Cells(targetRow, targetCol).Value = masterWS.Cells(masterRow, sourceCol).Value
+    End If
+End Sub
+
+'==================================================
 ' Utilities
 '==================================================
 Private Sub EnsureFolderExists(ByVal folderPath As String)
@@ -640,7 +686,3 @@ EH:
     MsgBox "Failed to save output CSV to:" & vbCrLf & FINAL_OUTPUT_CSV & vbCrLf & vbCrLf & _
            "Error: " & Err.Description, vbExclamation
 End Sub
-
-
-
-
